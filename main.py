@@ -1,7 +1,10 @@
-from fastapi import FastAPI
-import requests
-import pandas as pd
+
 from io import StringIO
+import datetime
+from fastapi import FastAPI
+import pandas as pd
+import requests
+
 from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI()
@@ -86,6 +89,15 @@ def fetchResources():
     etiquetas = obtener_etiquetas(conjuntos)
     return {"conjuntos": conjuntos, "recursos": recursos, "categorias": categorias, "etiquetas": etiquetas}
 
+@app.get("/api/promedio_semanal")
+def promedio_semanal():
+    data = pd.DataFrame(recursosTotales)
+    data['fecha_creacion'] = pd.to_datetime(data['creacion_recurso'])
+    data['semana_anio'] = data['fecha_creacion'].apply(lambda x: f"{x.isocalendar()[1]}-{x.isocalendar()[0]}")
+    reps = data['semana_anio'].value_counts().reset_index().rename(columns = {'count': "total_semanal"})
+    promedio = reps["total_semanal"].sum() / reps.size
+    print(promedio)
+
 @app.get("/api/planes_apertura")
 def obtenerPlanes():
     dict_columnas = {
@@ -142,15 +154,17 @@ def obtenerPlanes():
         "Accept-Language": "es-MX,es;q=0.9",
         "Referer": "https://www.datos.gob.mx/",
     }
-    data_frames = []
+    data_frames = list()
     for url in listaUrls:
         request = requests.get(url, headers=headers)
         if request.status_code == 200:
             response = request.text
-            df = pd.read_csv(StringIO(response))
+            df = pd.read_csv(StringIO(response), encoding='latin1')
             df = df.rename(columns = dict_columnas)
-            data_frames.append(df)            
+            print(df.shape)
+            #data_frames.append(df)        
+            #print(data_frames)    
         else:
             print(request.status_code)
-    all = pd.concat(data_frames, ignore_index=True)
-    print(all.shape)
+    #all = pd.concat(data_frames, ignore_index=True)
+    #print(all.shape)
