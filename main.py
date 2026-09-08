@@ -7,6 +7,7 @@ import requests
 import math
 import asyncio
 import aiohttp
+import itertools
 
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -124,6 +125,13 @@ def promedio_semanal():
 
 
 def formatearFecha(x, anio):
+    anios = {"2026": 2026, 
+             "26":2026, 
+             "2025": 2025, 
+             "25": 2025, 
+             "2027": 2027, 
+             "27": 2027
+             }
     meses = {"enero": "01", 
              "febrero": "02", 
              "marzo": "03", 
@@ -135,7 +143,32 @@ def formatearFecha(x, anio):
              "septiembre": "09", 
              "octubre": "10", 
              "noviembre": "11", 
-             "diciembre": "12"}
+             "diciembre": "12",
+             "ene": "01", 
+             "feb": "02", 
+             "mar": "03", 
+             "abr": "04", 
+             "may": "05", 
+             "jun": "06", 
+             "jul":"07", 
+             "ago": "08", 
+             "sep": "09", 
+             "oct": "10", 
+             "nov": "11", 
+             "dic": "12",
+             "mzo": "03",
+             "01": "01", 
+             "02": "02", 
+             "03": "03", 
+             "04": "04", 
+             "05": "05", 
+             "06": "06", 
+             "07":"07", 
+             "08": "08", 
+             "09": "09", 
+             "10": "10", 
+             "11": "11", 
+             "12": "12"}
     
     palabra = x.replace("\r", '').replace("\n", '').replace("(", '').replace(")", "").strip().lower()
     try:
@@ -153,31 +186,44 @@ def formatearFecha(x, anio):
                 palabra = datetime.datetime.strptime(palabra, "%d-%m-%Y")
                 palabra = datetime.strftime(palabra, '%Y-%m-%d')
             except:
-                print("No se pudo parsear como fecha", palabra)
-
-
-    """"
-    # En caso de que solo traiga el mes
-    if palabra in meses.keys():
-        palabra = f"01-{meses[palabra]}-{anio}"
-    else:
-        # Si la fecha ya es de la forma "%d-%m-%Y"
-        try:
-            palabra = palabra.replace("/", "-")
-            palabra = datetime.datetime.strptime(x, "%d-%m-%Y")
-        except:
-            try:
-                prueba = palabra.split('de')
-                for i in range(len(prueba)):
-                    prueba[i-1] = prueba[i-1].strip()
-                prueba[1] = meses[prueba[1]]
-                prueba = "-".join(prueba)
-                palabra = datetime.datetime.strptime(prueba, "%d-%m-%Y")
-            except:
-                print("No se pudo parsear como fecha: ", x)
-        else:
-            print("No se pudo parsear de como fecha ni separando: ", x)
-    """
+                try: 
+                    prueba = palabra.split(' ')
+                    for i in range(len(prueba)):
+                        prueba[i-1] = prueba[i-1].split('-')
+                    prueba = list(itertools.chain(*prueba))
+                    for i in range(len(prueba)):
+                        prueba[i-1] = prueba[i-1].split('.')
+                    prueba = list(itertools.chain(*prueba))
+                    for i in range(len(prueba)):
+                        prueba[i-1] = prueba[i-1].strip().replace("del", '').replace('de', '').replace(',', '')
+                    prueba = list(filter(lambda x: x != '', prueba))
+                    if len(prueba) == 1 and palabra in meses.keys():
+                        palabra = f"{anio}-{meses[palabra]}-01"
+                        palabra = datetime.datetime.strptime(palabra, "%Y-%m-%d")
+                    elif len(prueba) == 3:
+                        prueba[1] = meses[prueba[1]]
+                        prueba = "-".join(prueba)
+                        palabra = datetime.datetime.strptime(prueba, "%d-%m-%Y")
+                        palabra = datetime.strftime(palabra, '%Y-%m-%d')
+                    elif len(prueba) == 2:
+                        if prueba[0] in meses.keys() and prueba[1] in anios.keys():
+                            palabra = f"{anios[prueba[1]]}-{meses[prueba[0]]}-01"
+                            palabra = datetime.datetime.strptime(palabra, "%Y-%m-%d")
+                        elif prueba[0] in anios.keys() and len(prueba[0]) == 4 and prueba[1] in meses.keys():
+                            palabra = f"{anios[prueba[0]]}-{meses[prueba[1]]}-01"
+                            palabra = datetime.datetime.strptime(palabra, "%Y-%m-%d")
+                        elif float(prueba[0]) and prueba[1] in meses.keys():
+                            palabra = f"{anio}-{meses[prueba[1]]}-{prueba[0]}"
+                            palabra = datetime.datetime.strptime(palabra, "%Y-%m-%d")
+                        else:
+                            #print("Estamos en el ultimo caso del array con 2 elementos: ", prueba)
+                            return palabra
+                    else:
+                        #print("Estamos en el último caso del bloque if: ", prueba)
+                        return palabra
+                except:    
+                    #print("No se pudo parsear como fecha", palabra)
+                    return palabra
     return palabra
 
 
@@ -227,6 +273,10 @@ async def fetchCsv(session, url):
         'descripcion_conjunto_datos': "descripcion_conjunto_datos", 
         'Conjunto de datos': "conjunto_datos", 
         'recurso_datos': "recurso_datos",
+        "Descripción del conjunto de datos": "descripcion_conjunto_datos",
+        "Periodicidad de publicación": "periodicidad_publicacion",
+        "Área que genera el recurso de datos": "area_genera_recurso_datos",
+        "A\u0081rea que genera el recurso de datos": "area_genera_recurso_datos"
     }
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -256,7 +306,7 @@ async def fetchCsv(session, url):
                         df['fecha_formateada'] = pd.to_datetime(df['fecha_alternativa'], format='%Y-%m-%d', errors='coerce')
                     return df
                 except:
-                    print("No se pudo obtener el df")
+                    print("No se pudo obtener el df: ", url['recurso'])
                     return
 
         else:
@@ -273,6 +323,5 @@ async def obtenerPlanes():
 
     df_all = pd.concat(resultados, ignore_index=True)
     no_fechas = df_all[df_all['fecha_formateada'].isna()].to_json(orient='records')
-    print(no_fechas)
     con_fechas = df_all[df_all['fecha_formateada'].notna()].to_json(orient='records')
     return {"fechas_parseadas": con_fechas, "fechas_sin_parsear": no_fechas}
