@@ -1,5 +1,5 @@
 
-from io import StringIO
+from io import BytesIO
 import datetime
 from fastapi import FastAPI
 import pandas as pd
@@ -123,7 +123,7 @@ def promedio_semanal():
     return {"df": reps.to_json(orient='records'), "promedio": promedio, "varianza": varianza, "desviacion": desviacion}
 
 
-def formatearSoloMes(x, anio):
+def formatearFecha(x, anio):
     meses = {"enero": "01", 
              "febrero": "02", 
              "marzo": "03", 
@@ -136,7 +136,27 @@ def formatearSoloMes(x, anio):
              "octubre": "10", 
              "noviembre": "11", 
              "diciembre": "12"}
-    palabra = x.replace("\r", '').replace("\n", '').strip().lower()
+    
+    palabra = x.replace("\r", '').replace("\n", '').replace("(", '').replace(")", "").strip().lower()
+    try:
+        # Intentamos parsearlo con la fecha con estructutra "anio-mes-dia"
+        palabra = datetime.datetime.strptime(palabra, "%Y-%m-%d")
+    except:
+        try:
+            # Intentamos parsearlo como fecha con estructura día-mes-anio 
+            palabra = datetime.datetime.strptime(palabra, "%d-%m-%Y")
+            palabra = datetime.strftime(palabra, '%Y-%m-%d')
+        except:
+            try:
+                # Intentamos parsearlo como fecha con estructura día/mes/anio
+                palabra = palabra.replace("/", "-")
+                palabra = datetime.datetime.strptime(palabra, "%d-%m-%Y")
+                palabra = datetime.strftime(palabra, '%Y-%m-%d')
+            except:
+                print("No se pudo parsear como fecha", palabra)
+
+
+    """"
     # En caso de que solo traiga el mes
     if palabra in meses.keys():
         palabra = f"01-{meses[palabra]}-{anio}"
@@ -157,10 +177,11 @@ def formatearSoloMes(x, anio):
                 print("No se pudo parsear como fecha: ", x)
         else:
             print("No se pudo parsear de como fecha ni separando: ", x)
+    """
     return palabra
 
-@app.get("/api/planes_apertura")
-def obtenerPlanes():
+
+async def fetchCsv(session, url):
     dict_columnas = {
         'poblacion_objetivo_o_sector_uso': "poblacion_objetivo_sector_uso", 
         'Periodicidad de\n publicaciÃ³n': "periodicidad_publicacion", 
@@ -207,31 +228,51 @@ def obtenerPlanes():
         'Conjunto de datos': "conjunto_datos", 
         'recurso_datos': "recurso_datos",
     }
-    planes = list(filter(lambda x: x["nombre_categoria"] == 'Plan de Apertura de Datos', recursosTotales))
-    listaUrls = list(map(lambda x: {'recurso': x['nombre_recurso'],'url': x['url_recurso'], 'fecha': x['creacion_recurso']}, planes))
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         "Accept": "application/json, text/plain, */*",
         "Accept-Language": "es-MX,es;q=0.9",
         "Referer": "https://www.datos.gob.mx/",
     }
-    data_frames = list()
-    for url in listaUrls[0:5]:
-        print("La opcion:", url)
-        fecha = datetime.datetime.strptime(url['fecha'], "%Y-%m-%dT%H:%M:%S.%f")
-        anio = fecha.year
-        request = requests.get(url['url'], headers=headers)
-        if request.status_code == 200:
-            response = request.text
-            df = pd.read_csv(StringIO(response), encoding='utf-8', low_memory=False)
-            df = df.rename(columns = dict_columnas)
-            print(df.columns)
-            if df["fecha_publicacion"].dtypes == "str":
-                df['fecha_alternativa'] = df['fecha_publicacion'].apply(lambda x: formatearSoloMes(x, anio))
-                df['fecha_formateada'] = pd.to_datetime(df['fecha_alternativa'], format='%d-%m-%Y', errors='coerce')
-            # print(df.columns)
-            #data_frames.append(df)          
+    fecha = datetime.datetime.strptime(url['fecha'], "%Y-%m-%dT%H:%M:%S.%f")
+    anio = fecha.year
+    la_url = url['url']
+    async with session.get(la_url, headers=headers) as request:
+        if request.status == 200:
+            raw = await request.read() 
+            try:
+                df = pd.read_csv(BytesIO(raw), encoding='utf-8', low_memory=False)
+                df = df.rename(columns = dict_columnas)
+                if df["fecha_publicacion"].dtypes == "str":
+                    df['fecha_alternativa'] = df['fecha_publicacion'].apply(lambda x: formatearFecha(x, anio))
+                    df['fecha_formateada'] = pd.to_datetime(df['fecha_alternativa'], format='%Y-%m-%d', errors='coerce')
+                return df
+            except:
+                try:
+                    df = pd.read_csv(BytesIO(raw), encoding='latin-1', low_memory=False)
+                    df = df.rename(columns = dict_columnas)
+                    if df["fecha_publicacion"].dtypes == "str":
+                        df['fecha_alternativa'] = df['fecha_publicacion'].apply(lambda x: formatearFecha(x, anio))
+                        df['fecha_formateada'] = pd.to_datetime(df['fecha_alternativa'], format='%Y-%m-%d', errors='coerce')
+                    return df
+                except:
+                    print("No se pudo obtener el df")
+                    return
+
         else:
-            print(request.status_code)
-    #all = pd.concat(data_frames, ignore_index=True)
-    #print(all.shape)
+            print("Fracasó la peticion del recurso: ", url['recurso'])
+            return
+
+@app.get("/api/planes_apertura")
+async def obtenerPlanes():
+    planes = list(filter(lambda x: x["nombre_categoria"] == 'Plan de Apertura de Datos', recursosTotales))
+    listaUrls = list(map(lambda x: {'recurso': x['nombre_recurso'],'url': x['url_recurso'], 'fecha': x['creacion_recurso']}, planes))
+    async with aiohttp.ClientSession() as session:
+        tasks = [fetchCsv(session, url) for url in listaUrls]
+        resultados = await asyncio.gather(*tasks, return_exceptions=False)
+
+    df_all = pd.concat(resultados, ignore_index=True)
+    no_fechas = df_all[df_all['fecha_formateada'].isna()].to_json(orient='records')
+    print(no_fechas)
+    con_fechas = df_all[df_all['fecha_formateada'].notna()].to_json(orient='records')
+    return {"fechas_parseadas": con_fechas, "fechas_sin_parsear": no_fechas}
