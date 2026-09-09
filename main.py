@@ -1,7 +1,7 @@
 
 from io import BytesIO
 import datetime
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 import pandas as pd
 import requests
 import math
@@ -107,6 +107,12 @@ async def fetchResources():
     categorias = obtener_categorias(conjuntos)
     etiquetas = obtener_etiquetas(conjuntos)
     return {"conjuntos": conjuntos, "recursos": recursos, "categorias": categorias, "etiquetas": etiquetas}
+
+@app.get("/api/recursos_x_institucion")
+async def contarRecursosInstitucion():
+    data = pd.DataFrame(recursosTotales)
+    total_x_institucion = data['nombre_institucion'].value_counts().reset_index(drop=False).rename(columns = {'count': "bases_publicadas"})
+    return {"datum" : total_x_institucion.to_json(orient="records")}
 
 @app.get("/api/promedio_semanal")
 def promedio_semanal():
@@ -295,7 +301,7 @@ async def fetchCsv(session, url):
                 df = df.rename(columns = dict_columnas)
                 if df["fecha_publicacion"].dtypes == "str":
                     df['fecha_alternativa'] = df['fecha_publicacion'].apply(lambda x: formatearFecha(x, anio))
-                    df['fecha_formateada'] = pd.to_datetime(df['fecha_alternativa'], format='%Y-%m-%d', errors='coerce')
+                    df['fecha_formateada'] = pd.to_datetime(df['fecha_alternativa'], format='%Y-%m-%d', errors='coerce').astype(str)
                 return df
             except:
                 try:
@@ -303,7 +309,8 @@ async def fetchCsv(session, url):
                     df = df.rename(columns = dict_columnas)
                     if df["fecha_publicacion"].dtypes == "str":
                         df['fecha_alternativa'] = df['fecha_publicacion'].apply(lambda x: formatearFecha(x, anio))
-                        df['fecha_formateada'] = pd.to_datetime(df['fecha_alternativa'], format='%Y-%m-%d', errors='coerce')
+                        df['fecha_formateada'] = pd.to_datetime(df['fecha_alternativa'], format='%Y-%m-%d', errors='coerce').astype(str)
+                    df =df.reset_index(drop=False)
                     return df
                 except:
                     print("No se pudo obtener el df: ", url['recurso'])
@@ -314,8 +321,14 @@ async def fetchCsv(session, url):
             return
 
 @app.get("/api/planes_apertura")
-async def obtenerPlanes():
-    planes = list(filter(lambda x: x["nombre_categoria"] == 'Plan de Apertura de Datos', recursosTotales))
+async def obtenerPlanes(institucion):
+    con_fechas = []
+    no_fechas = []
+    recursos = list(filter(lambda x: x["nombre_institucion"] == institucion, recursosTotales))
+    planes = list(filter(lambda x: x["nombre_categoria"] == 'Plan de Apertura de Datos', recursos))
+    if len(planes) == 0:
+        raise HTTPException(status_code=404, detail="Esta institucion no subió su plan de apertura")
+
     listaUrls = list(map(lambda x: {'recurso': x['nombre_recurso'],'url': x['url_recurso'], 'fecha': x['creacion_recurso']}, planes))
     async with aiohttp.ClientSession() as session:
         tasks = [fetchCsv(session, url) for url in listaUrls]
