@@ -112,6 +112,11 @@ async def fetchResources():
 async def contarRecursosInstitucion():
     data = pd.DataFrame(recursosTotales)
     total_x_institucion = data['nombre_institucion'].value_counts().reset_index(drop=False).rename(columns = {'count': "bases_publicadas"})
+    tiene_plan_dict = {}
+    for institucion in data['nombre_institucion']:
+        tiene_plan_dict[institucion] = any(d['nombre_institucion'] == institucion and d['nombre_categoria'] == 'Plan de Apertura de Datos' for d in recursosTotales)
+    total_x_institucion['tiene_plan'] = total_x_institucion['nombre_institucion'].apply(lambda x: tiene_plan_dict[x])
+    total_x_institucion = total_x_institucion.reset_index(drop=False)
     return {"datum" : total_x_institucion.to_json(orient="records")}
 
 @app.get("/api/promedio_semanal")
