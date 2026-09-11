@@ -8,6 +8,7 @@ import math
 import asyncio
 import aiohttp
 import itertools
+import time
 
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -77,6 +78,26 @@ async def fetch(session, params):
         else:
             return response.error
 
+_cache = {}
+TTL_SEGUNDOS = 300  # 5 minutos, ajustalo según qué tan seguido cambian tus datos
+
+async def fetch_con_cache(session, param):
+    key = str(param)  # ajustá esto si param es un dict, como vimos arriba
+    ahora = time.time()
+
+    # 1. ¿Ya tengo este dato guardado y sigue "fresco"?
+    if key in _cache:
+        resultado, timestamp = _cache[key]
+        if ahora - timestamp < TTL_SEGUNDOS:
+            return resultado  # <- no hacemos ningún request, devolvemos lo guardado
+
+    # 2. No estaba, o estaba vencido: pedimos de verdad
+    resultado = await fetch(session, param)
+
+    # 3. Guardamos el resultado nuevo + el momento actual
+    _cache[key] = (resultado, ahora)
+
+    return resultado
 
 async def multiFetch():
     maxExpectedPackages = 2000
@@ -89,7 +110,7 @@ async def multiFetch():
         params.append(param)
 
     async with aiohttp.ClientSession() as session:
-        tasks = [fetch(session, param) for param in params]
+        tasks = [fetch_con_cache(session, param) for param in params]
         resultados = await asyncio.gather(*tasks, return_exceptions=True)
 
     for resultado in resultados:
@@ -107,6 +128,18 @@ async def fetchResources():
     categorias = obtener_categorias(conjuntos)
     etiquetas = obtener_etiquetas(conjuntos)
     return {"conjuntos": conjuntos, "recursos": recursos, "categorias": categorias, "etiquetas": etiquetas}
+
+@app.get("/api/recursos_x_categoria")
+async def contarRecursosPorCategoria():
+    data = pd.DataFrame(recursosTotales)
+    data['mes'] = pd.to_datetime(data['creacion_recurso']).dt.month.apply(str)
+    data['anio'] = pd.to_datetime(data['creacion_recurso']).dt.year.apply(str)
+    data['fecha'] = data['mes'].str.cat(data['anio'], sep="-")
+    datum = data[['nombre_categoria', 'fecha']].groupby(['nombre_categoria', 'fecha']).size()
+    datum = datum.reset_index().rename(columns = {'count': 'reps'})
+    print(datum.head(10))
+    return {"datum" : datum.to_json(orient="records")}
+
 
 @app.get("/api/recursos_x_institucion")
 async def contarRecursosInstitucion():
@@ -131,7 +164,6 @@ def promedio_semanal():
     promedio = (reps["total_semanal"].sum() / reps.shape[0]).round(2)
     varianza = reps["total_semanal"].var().round(2)
     desviacion = reps["total_semanal"].std().round(2)
-    print(promedio, varianza, desviacion)
     return {"df": reps.to_json(orient='records'), "promedio": promedio, "varianza": varianza, "desviacion": desviacion}
 
 
