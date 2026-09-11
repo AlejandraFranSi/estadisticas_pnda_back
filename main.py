@@ -134,11 +134,12 @@ async def contarRecursosPorCategoria():
     data = pd.DataFrame(recursosTotales)
     data['mes'] = pd.to_datetime(data['creacion_recurso']).dt.month.apply(str)
     data['anio'] = pd.to_datetime(data['creacion_recurso']).dt.year.apply(str)
-    data['fecha'] = data['mes'].str.cat(data['anio'], sep="-")
+    data['fecha'] = data['mes'].str.cat(data['anio'], sep="/")
     datum = data[['nombre_categoria', 'fecha']].groupby(['nombre_categoria', 'fecha']).size()
-    datum = datum.reset_index().rename(columns = {'count': 'reps'})
-    print(datum.head(10))
-    return {"datum" : datum.to_json(orient="records")}
+    datum = datum.reset_index().rename(columns = {0: 'reps_sum', 'nombre_categoria': "categoria"})
+    valor_maximo = int(datum['reps_sum'].max())
+    valor_minimo = int(datum['reps_sum'].min())
+    return {"datum" : datum.to_json(orient="records"), "max": valor_maximo, "min": valor_minimo}
 
 
 @app.get("/api/recursos_x_institucion")
