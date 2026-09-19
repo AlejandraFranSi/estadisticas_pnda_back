@@ -12,6 +12,8 @@ dependencies = [
     "asyncio>=4.0.0",
     "chardet>=7.6.0",
     "fastapi[standard]>=0.141.1",
+    "mysql-connector>=2.2.9",
+    "mysql-connector-python>=26.7.0",
     "pandas>=3.0.5",
     "requests>=2.34.2",
 ]

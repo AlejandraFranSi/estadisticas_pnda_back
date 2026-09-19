@@ -9,6 +9,7 @@ import asyncio
 import aiohttp
 import itertools
 import time
+import mysql.connector
 
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -62,6 +63,47 @@ def obtener_etiquetas(conjuntos):
         objeto_etiquetas = list(map(lambda x: x["name"], conjunto["tags"]))
         etiquetas += objeto_etiquetas
     return set(etiquetas)
+
+@app.get("/api/fetch_personalizado")
+async def fetch_personalizado():
+    #proxies = {
+    #    "https://": "207.249.122.6",
+    #    "http://": "207.249.122.6"
+    #}
+    #proxies = {
+    #        "https://": "www.repodatos.atdt.gob.mx",
+    #        "http://": "www.repodatos.atdt.gob.mx"
+    #    }
+    #headers = {
+    #    "Accept": '*/*',
+    #    "Accept-encoding": "gzip, deflate, br, zstd",
+    #    "Accept-language": "es-419,es-US;q=0.9,es;q=0.8,la;q=0.7",
+    #    "Origin": "http://207.249.122.6",
+    #    "Priority": "u=1, i",
+    #    "Referer": "http://localhost:5173/",
+    #    "Sec-Ch-Ua": '"Chromium";v="152", "Not?A_Brand";v="24", "Google Chrome";v="152"',
+    #    "Sec-Ch-Ua-Mobile": "?0",
+    #    "Sec-Ch-Ua-Platform": "Windows",
+    #    "Sec-Fetch-Dest": "empty",
+    #    "Sec-Fetch-Mode": "cors",
+    #    "Sec-Fetch-Site": "cross-site",
+    #    "User-Agent" : "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36"}
+    headers = {
+        "Accept-encoding": "gzip, deflate, br, zstd",
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "es-MX,es;q=0.9",
+        "Referer": "https://www.datos.gob.mx/",
+        "Priority": "u=1, i",
+        "Sec-Fetch-Mode": "cors",
+        "Sec-Ch-Ua": '"Chromium";v="152", "Not?A_Brand";v="24", "Google Chrome";v="152"',
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    }
+    url = "https://repodatos.atdt.gob.mx/api_update/prs/cuaderno_mensual_estadistico_penitenciario_abril_2026/sobrepob_ent.csv"
+    the_request = requests.get(url, headers=headers) 
+    response = the_request.text
+    print(response)
+    #return the_request
+
 
 async def fetch(session, params):
     headers = {
@@ -139,6 +181,18 @@ async def contarRecursosPorCategoria():
     datum = datum.reset_index().rename(columns = {0: 'reps_sum', 'nombre_categoria': "categoria"})
     valor_maximo = int(datum['reps_sum'].max())
     valor_minimo = int(datum['reps_sum'].min())
+    return {"datum" : datum.to_json(orient="records"), "max": valor_maximo, "min": valor_minimo}
+
+@app.get("/api/recursos_x_dia")
+async def contarRecursosPorDia():
+    data = pd.DataFrame(recursosTotales)
+    data['dia'] = pd.to_datetime(data['creacion_recurso']).dt.day.apply(str)
+    data['mes'] = pd.to_datetime(data['creacion_recurso']).dt.month.apply(str)
+    data['anio'] = pd.to_datetime(data['creacion_recurso']).dt.year.apply(str)
+    data['fecha_parseada'] = data['anio'].str.cat([data['mes'], data['dia']], sep="/")
+    datum = data['fecha_parseada'].value_counts().reset_index()
+    valor_maximo = int(datum['count'].max())
+    valor_minimo = int(datum['count'].min())
     return {"datum" : datum.to_json(orient="records"), "max": valor_maximo, "min": valor_minimo}
 
 
@@ -376,3 +430,34 @@ async def obtenerPlanes(institucion):
     no_fechas = df_all[df_all['fecha_formateada'].isna()].to_json(orient='records')
     con_fechas = df_all[df_all['fecha_formateada'].notna()].to_json(orient='records')
     return {"fechas_parseadas": con_fechas, "fechas_sin_parsear": no_fechas}
+
+@app.get("/api/correos_intitucionales")
+def correos_institucionales():
+    # Establecemos la conexión con el servidor
+    mydb = mysql.connector.connect(
+    host="localhost",
+    user="root",
+    password=".Afasa3113asafA.",
+    database="pandasi",
+    )
+    mycursor = mydb.cursor(dictionary = True)
+    # Obtenemos la tabla que nos interesa
+    mycursor.execute("SELECT * FROM pandasi.vinculacion;")
+    vinculacion = mycursor.fetchall()
+    data_vinculacion = pd.DataFrame(vinculacion)
+    # Hacemos una mini limpieza de la base, quitamos columnas vacías y agregamos columnas de interés
+    data_vinculacion = data_vinculacion[['id_interaccion', 'clave_institucion', 'tipo_evento',
+        'fecha_evento', 'objetivo_interaccion', 'estatus_atencion', 'estatus_respuesta']]
+    data_vinculacion = data_vinculacion.dropna()
+    data_vinculacion['mes'] = pd.to_datetime(data_vinculacion['fecha_evento']).dt.month.apply(str)
+    data_vinculacion['anio'] = pd.to_datetime(data_vinculacion['fecha_evento']).dt.year.apply(str)
+    data_vinculacion['fecha'] = data_vinculacion['mes'].str.cat(data_vinculacion['anio'], sep="/")
+    # Agrupamos la información que nos interesa
+    frec_objetivo_contacto = data_vinculacion[["mes", "anio", "objetivo_interaccion"]].groupby(["anio", "mes", "objetivo_interaccion"]).size().reset_index()
+    frec_objetivo_contacto['anio'] = frec_objetivo_contacto['anio'].astype(int)
+    frec_objetivo_contacto['mes'] = frec_objetivo_contacto['mes'].astype(int)
+    frec_objetivo_contacto = frec_objetivo_contacto.sort_values(by = ["anio", "mes"])
+    frec_objetivo_contacto['mes_anio'] = frec_objetivo_contacto['mes'].astype(str).str.cat(data_vinculacion['anio'], sep="/")
+    frec_objetivo_contacto = frec_objetivo_contacto.drop(columns = ["anio", "mes"])
+    frec_objetivo_contacto = frec_objetivo_contacto.rename(columns = {0: "interacciones"})
+    return {"data_agrupada" : frec_objetivo_contacto.to_json(orient="records")}
