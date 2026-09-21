@@ -440,6 +440,19 @@ def correos_institucionales():
     password=".Afasa3113asafA.",
     database="pandasi",
     )
+
+    categorias_interaccion_dict = {
+        "actualizar": "publicación", 
+        "otros": "otros", 
+        "solicitud_datos": "publicación", 
+        "publicar": "publicación", 
+        "enlace": "otros", 
+        "dudas": "atención", 
+        "solicitar_reunion": "atención", 
+        "datos_nuevos": "publicación", 
+        "datos_historicos": "publicación", 
+        "acuse": "atención"
+    }
     mycursor = mydb.cursor(dictionary = True)
     # Obtenemos la tabla que nos interesa
     mycursor.execute("SELECT * FROM pandasi.vinculacion;")
@@ -451,13 +464,11 @@ def correos_institucionales():
     data_vinculacion = data_vinculacion.dropna()
     data_vinculacion['mes'] = pd.to_datetime(data_vinculacion['fecha_evento']).dt.month.apply(str)
     data_vinculacion['anio'] = pd.to_datetime(data_vinculacion['fecha_evento']).dt.year.apply(str)
-    data_vinculacion['fecha'] = data_vinculacion['mes'].str.cat(data_vinculacion['anio'], sep="/")
+    data_vinculacion["mes_anio"] = data_vinculacion["fecha_evento"].apply(lambda x: str(pd.to_datetime(x).month) + "/" + str(pd.to_datetime(x).year))
+    data_vinculacion["objetivo_agrupado"] = data_vinculacion["objetivo_interaccion"].apply(lambda x: categorias_interaccion_dict[x])
     # Agrupamos la información que nos interesa
-    frec_objetivo_contacto = data_vinculacion[["mes", "anio", "objetivo_interaccion"]].groupby(["anio", "mes", "objetivo_interaccion"]).size().reset_index()
-    frec_objetivo_contacto['anio'] = frec_objetivo_contacto['anio'].astype(int)
-    frec_objetivo_contacto['mes'] = frec_objetivo_contacto['mes'].astype(int)
+    frec_objetivo_contacto = data_vinculacion[["mes_anio", "mes", "anio", "objetivo_agrupado"]].groupby(["mes_anio", "anio", "mes", "objetivo_agrupado"]).size().reset_index()
     frec_objetivo_contacto = frec_objetivo_contacto.sort_values(by = ["anio", "mes"])
-    frec_objetivo_contacto['mes_anio'] = frec_objetivo_contacto['mes'].astype(str).str.cat(data_vinculacion['anio'], sep="/")
     frec_objetivo_contacto = frec_objetivo_contacto.drop(columns = ["anio", "mes"])
-    frec_objetivo_contacto = frec_objetivo_contacto.rename(columns = {0: "interacciones"})
+    frec_objetivo_contacto = frec_objetivo_contacto.rename(columns = {0: "interacciones", "objetivo_agrupado": "objetivo_interaccion"})
     return {"data_agrupada" : frec_objetivo_contacto.to_json(orient="records")}
