@@ -24,7 +24,32 @@ app.add_middleware(
 )
 
 recursosTotales = []
+hoy = datetime.datetime.today()
+este_anio = hoy.year
+inicio_temporal = pd.to_datetime("01-01-2025", dayfirst=True)
+anio_inicio = 2025
+inicio_trimestres = ["01-01", "01-04", "01-07", "01-10"]
+fin_trimestres = ["31-03", "30-06", "30-09", "31-12"]
 
+def obtener_trimestres():
+    trimestres = {}
+    for anio in range(int(anio_inicio), int(este_anio + 1)):
+        i = 1
+        for n in range(0, 4):
+            trimestres[f"{i}-{anio}"] =[inicio_trimestres[n] + "-" + str(anio), fin_trimestres[n] + "-" + str(anio)]
+            if i == 4:
+                i = 1
+            else:
+                i += 1
+    return trimestres
+
+def identificar_trimestre(valor):
+    trimestres = obtener_trimestres()
+    fecha = pd.to_datetime(valor, dayfirst=True)
+    for trimestre in trimestres.keys():
+        if fecha >= pd.to_datetime(trimestres[trimestre][0], dayfirst=True) and fecha <= pd.to_datetime(trimestres[trimestre][1], dayfirst=True):
+            return trimestre
+        
 def iterar_recursos(conjuntos):
     recursos = []
     for conjunto in conjuntos:
@@ -433,14 +458,6 @@ async def obtenerPlanes(institucion):
 
 @app.get("/api/correos_intitucionales")
 def correos_institucionales():
-    # Establecemos la conexión con el servidor
-    mydb = mysql.connector.connect(
-    host="localhost",
-    user="root",
-    password=".Afasa3113asafA.",
-    database="pandasi",
-    )
-
     categorias_interaccion_dict = {
         "actualizar": "publicación", 
         "otros": "otros", 
@@ -453,6 +470,13 @@ def correos_institucionales():
         "datos_historicos": "publicación", 
         "acuse": "atención"
     }
+    # Establecemos la conexión con el servidor
+    mydb = mysql.connector.connect(
+    host="localhost",
+    user="root",
+    password=".Afasa3113asafA.",
+    database="pandasi",
+    )
     mycursor = mydb.cursor(dictionary = True)
     # Obtenemos la tabla que nos interesa
     mycursor.execute("SELECT * FROM pandasi.vinculacion;")
@@ -472,3 +496,35 @@ def correos_institucionales():
     frec_objetivo_contacto = frec_objetivo_contacto.drop(columns = ["anio", "mes"])
     frec_objetivo_contacto = frec_objetivo_contacto.rename(columns = {0: "interacciones", "objetivo_agrupado": "objetivo_interaccion"})
     return {"data_agrupada" : frec_objetivo_contacto.to_json(orient="records")}
+
+@app.get("/api/correos_trimestrales")
+def correos_trimestrales(inicio, fin):
+    fecha_inicial = pd.to_datetime(inicio)
+    fecha_final = pd.Timestamp(fin)
+    print(inicio)
+    mydb = mysql.connector.connect(
+    host="localhost",
+    user="root",
+    password=".Afasa3113asafA.",
+    database="pandasi",
+    )
+    mycursor = mydb.cursor(dictionary = True)
+    mycursor.execute("SELECT * FROM pandasi.vinculacion;")
+    vinculacion = mycursor.fetchall()
+    data_vinculacion = pd.DataFrame(vinculacion)
+    trimestres = obtener_trimestres()
+    # Hacemos una mini limpieza de la base, quitamos columnas vacías y agregamos columnas de interés
+    data_vinculacion = data_vinculacion[['id_interaccion', 'clave_institucion', 'tipo_evento',
+        'fecha_evento', 'objetivo_interaccion', 'estatus_atencion', 'estatus_respuesta']]
+    data_vinculacion = data_vinculacion.dropna()
+    datum = data_vinculacion[pd.to_datetime(data_vinculacion["fecha_evento"]) >= fecha_inicial]
+    datum = datum[pd.to_datetime(datum["fecha_evento"] )<= fecha_final]
+    datum["trimestre"] = datum["fecha_evento"].apply(lambda x: identificar_trimestre(x))
+    correos_trimestrales = datum["trimestre"].value_counts().reset_index()
+    correos_trimestrales["inicio_trimestre"] = correos_trimestrales["trimestre"].apply(lambda x: pd.to_datetime(trimestres[x][0], dayfirst=True))
+    correos_trimestrales["fin_trimestre"] = correos_trimestrales["trimestre"].apply(lambda x: pd.to_datetime(trimestres[x][1], dayfirst=True))
+    correos_trimestrales = correos_trimestrales.rename(columns = {"count": "interacciones"})
+    correos_trimestrales = correos_trimestrales.sort_values(by = "inicio_trimestre")
+    print(correos_trimestrales)
+    correos_trimestrales = correos_trimestrales.to_json(orient="records")
+    return {"interacciones":correos_trimestrales}
