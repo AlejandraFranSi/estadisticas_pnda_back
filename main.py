@@ -47,8 +47,9 @@ def identificar_trimestre(valor):
     trimestres = obtener_trimestres()
     fecha = pd.to_datetime(valor, dayfirst=True)
     for trimestre in trimestres.keys():
-        if fecha >= pd.to_datetime(trimestres[trimestre][0], dayfirst=True) and fecha <= pd.to_datetime(trimestres[trimestre][1], dayfirst=True):
+        if fecha >= pd.to_datetime(f"{trimestres[trimestre][0]}T00:00:00.0000000000", dayfirst=True) and fecha <= pd.to_datetime(f"{trimestres[trimestre][1]}T23:59:59.9999999999", dayfirst=True):
             return trimestre
+        
         
 def iterar_recursos(conjuntos):
     recursos = []
@@ -501,7 +502,6 @@ def correos_institucionales():
 def correos_trimestrales(inicio, fin):
     fecha_inicial = pd.to_datetime(inicio)
     fecha_final = pd.Timestamp(fin)
-    print(inicio)
     mydb = mysql.connector.connect(
     host="localhost",
     user="root",
@@ -525,6 +525,25 @@ def correos_trimestrales(inicio, fin):
     correos_trimestrales["fin_trimestre"] = correos_trimestrales["trimestre"].apply(lambda x: pd.to_datetime(trimestres[x][1], dayfirst=True))
     correos_trimestrales = correos_trimestrales.rename(columns = {"count": "interacciones"})
     correos_trimestrales = correos_trimestrales.sort_values(by = "inicio_trimestre")
-    print(correos_trimestrales)
     correos_trimestrales = correos_trimestrales.to_json(orient="records")
     return {"interacciones":correos_trimestrales}
+
+@app.get("/api/bases_trimestrales")
+async def bases_trimestrales(inicio, fin):
+    fecha_inicial = pd.to_datetime(inicio)
+    fecha_final = pd.to_datetime(fin)
+    trimestres = obtener_trimestres()
+    conjuntos = await multiFetch()
+    recursos = iterar_recursos(conjuntos)
+    recursos_df = pd.DataFrame(recursos)
+    datum = recursos_df[pd.to_datetime(recursos_df["creacion_recurso"]) >= fecha_inicial]
+    datum = datum[pd.to_datetime(datum["creacion_recurso"] )<= fecha_final]
+    datum["fecha_modificada"] = pd.to_datetime(datum["creacion_recurso"])
+    datum["trimestre"] = datum["creacion_recurso"].apply(lambda x: identificar_trimestre(pd.to_datetime(x)))
+    recursos_trimestrales = datum["trimestre"].value_counts().reset_index()
+    recursos_trimestrales["inicio_trimestre"] = recursos_trimestrales["trimestre"].apply(lambda x: pd.to_datetime(trimestres[x][0]))
+    recursos_trimestrales["fin_trimestre"] = recursos_trimestrales["trimestre"].apply(lambda x: pd.to_datetime(trimestres[x][1]))
+    recursos_trimestrales = recursos_trimestrales.rename(columns = {"count": "recursos"})
+    recursos_trimestrales = recursos_trimestrales.sort_values(by = "inicio_trimestre")
+    recursos_trimestrales = recursos_trimestrales.to_json(orient="records")
+    return {"recursos":recursos_trimestrales}
