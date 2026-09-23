@@ -31,6 +31,19 @@ anio_inicio = 2025
 inicio_trimestres = ["01-01", "01-04", "01-07", "01-10"]
 fin_trimestres = ["31-03", "30-06", "30-09", "31-12"]
 
+categorias_interaccion_dict = {
+    "actualizar": "publicación", 
+    "otros": "otros", 
+    "solicitud_datos": "publicación", 
+    "publicar": "publicación", 
+    "enlace": "otros", 
+    "dudas": "atención", 
+    "solicitar_reunion": "atención", 
+    "datos_nuevos": "publicación", 
+    "datos_historicos": "publicación", 
+    "acuse": "atención"
+}
+
 def obtener_trimestres():
     trimestres = {}
     for anio in range(int(anio_inicio), int(este_anio + 1)):
@@ -459,18 +472,6 @@ async def obtenerPlanes(institucion):
 
 @app.get("/api/correos_intitucionales")
 def correos_institucionales():
-    categorias_interaccion_dict = {
-        "actualizar": "publicación", 
-        "otros": "otros", 
-        "solicitud_datos": "publicación", 
-        "publicar": "publicación", 
-        "enlace": "otros", 
-        "dudas": "atención", 
-        "solicitar_reunion": "atención", 
-        "datos_nuevos": "publicación", 
-        "datos_historicos": "publicación", 
-        "acuse": "atención"
-    }
     # Establecemos la conexión con el servidor
     mydb = mysql.connector.connect(
     host="localhost",
@@ -499,9 +500,9 @@ def correos_institucionales():
     return {"data_agrupada" : frec_objetivo_contacto.to_json(orient="records")}
 
 @app.get("/api/correos_trimestrales")
-def correos_trimestrales(inicio, fin):
-    fecha_inicial = pd.to_datetime(inicio)
-    fecha_final = pd.Timestamp(fin)
+def correos_trimestrales():
+    #fecha_inicial = pd.to_datetime(inicio)
+    #fecha_final = pd.Timestamp(fin)
     mydb = mysql.connector.connect(
     host="localhost",
     user="root",
@@ -516,9 +517,10 @@ def correos_trimestrales(inicio, fin):
     # Hacemos una mini limpieza de la base, quitamos columnas vacías y agregamos columnas de interés
     data_vinculacion = data_vinculacion[['id_interaccion', 'clave_institucion', 'tipo_evento',
         'fecha_evento', 'objetivo_interaccion', 'estatus_atencion', 'estatus_respuesta']]
-    data_vinculacion = data_vinculacion.dropna()
-    datum = data_vinculacion[pd.to_datetime(data_vinculacion["fecha_evento"]) >= fecha_inicial]
-    datum = datum[pd.to_datetime(datum["fecha_evento"] )<= fecha_final]
+    #data_vinculacion = data_vinculacion.dropna()
+    #datum = data_vinculacion[pd.to_datetime(data_vinculacion["fecha_evento"]) >= fecha_inicial]
+    #datum = datum[pd.to_datetime(datum["fecha_evento"] )<= fecha_final]
+    datum = data_vinculacion.dropna()
     datum["trimestre"] = datum["fecha_evento"].apply(lambda x: identificar_trimestre(x))
     correos_trimestrales = datum["trimestre"].value_counts().reset_index()
     correos_trimestrales["inicio_trimestre"] = correos_trimestrales["trimestre"].apply(lambda x: pd.to_datetime(trimestres[x][0], dayfirst=True))
@@ -529,15 +531,19 @@ def correos_trimestrales(inicio, fin):
     return {"interacciones":correos_trimestrales}
 
 @app.get("/api/bases_trimestrales")
-async def bases_trimestrales(inicio, fin):
-    fecha_inicial = pd.to_datetime(inicio)
-    fecha_final = pd.to_datetime(fin)
+async def bases_trimestrales():
+    #fecha_inicial = pd.to_datetime(inicio)
+    #fecha_final = pd.to_datetime(fin)
     trimestres = obtener_trimestres()
+    #global recursosTotales
+    #if(len(recursosTotales) > 0):
+    #    conjuntos = recursosTotales
     conjuntos = await multiFetch()
     recursos = iterar_recursos(conjuntos)
     recursos_df = pd.DataFrame(recursos)
-    datum = recursos_df[pd.to_datetime(recursos_df["creacion_recurso"]) >= fecha_inicial]
-    datum = datum[pd.to_datetime(datum["creacion_recurso"] )<= fecha_final]
+    #datum = recursos_df[pd.to_datetime(recursos_df["creacion_recurso"]) >= fecha_inicial]
+    #datum = datum[pd.to_datetime(datum["creacion_recurso"] )<= fecha_final]
+    datum = recursos_df.dropna()
     datum["fecha_modificada"] = pd.to_datetime(datum["creacion_recurso"])
     datum["trimestre"] = datum["creacion_recurso"].apply(lambda x: identificar_trimestre(pd.to_datetime(x)))
     recursos_trimestrales = datum["trimestre"].value_counts().reset_index()
@@ -547,3 +553,75 @@ async def bases_trimestrales(inicio, fin):
     recursos_trimestrales = recursos_trimestrales.sort_values(by = "inicio_trimestre")
     recursos_trimestrales = recursos_trimestrales.to_json(orient="records")
     return {"recursos":recursos_trimestrales}
+
+@app.get("/api/categorias_bases_trimestrales")
+async def categorias_bases_trimestrales(inicio, fin):
+    conjuntos = await multiFetch()
+    recursos = iterar_recursos(conjuntos)
+    recursos_df = pd.DataFrame(recursos)
+    recursos_df["fecha"] = pd.to_datetime(recursos_df["creacion_recurso"]).dt.date
+    data_intervalo = recursos_df[pd.to_datetime(recursos_df["fecha"]) >= pd.to_datetime(inicio)]
+    data_intervalo = data_intervalo[pd.to_datetime(data_intervalo["fecha"]) <= pd.to_datetime(fin)]
+    recursos_x_cat = data_intervalo["nombre_categoria"].value_counts().reset_index().sort_values(by = "count", ascending = False)
+    recursos_x_cat = recursos_x_cat.rename(columns = {"count": "recursos"})
+    lista_categorias = list(recursos_x_cat["nombre_categoria"])
+    top_categorias = lista_categorias[0:3]
+    otras_categorias = lista_categorias[3:len(lista_categorias)]
+    data_intervalo["categoria_trimestral"] = data_intervalo["nombre_categoria"].apply(lambda x: x if x in top_categorias else "Otra")
+    temporal_top_categoria = data_intervalo[["fecha", "categoria_trimestral"]].groupby(["fecha", "categoria_trimestral"]).size().unstack()
+    temporal_top_categoria.columns.name = None
+    temporal_top_categoria = temporal_top_categoria.fillna(0)
+    datum = temporal_top_categoria.reset_index()
+    datum["fecha"] = datum["fecha"].astype(str)
+    datum = datum.to_json(orient="records")
+    # Ahora calculamos el promedio, la varianza y la desviación
+    temporal_top_categoria["total"] = temporal_top_categoria.sum(axis = 1)
+    promedio_diario_trimestral = temporal_top_categoria["total"].mean()
+    varianza_diaria_trimestral = temporal_top_categoria["total"].var()
+    desviacion_diaria_trimestral = temporal_top_categoria["total"].std()
+    maximo_diario_trimestral = temporal_top_categoria["total"].max()
+    return {"top_categorias": top_categorias, 
+            "otras_categorias": otras_categorias, 
+            "promedio": promedio_diario_trimestral, 
+            "desviacion": desviacion_diaria_trimestral,
+            "varianza": varianza_diaria_trimestral,
+            "maximo": maximo_diario_trimestral,
+            "data": datum}
+
+@app.get("/api/motivo_interacciones_trimestrales")
+async def motivo_interacciones_trimestrales(inicio, fin):
+    fecha_inicial = pd.to_datetime(inicio)
+    fecha_final = pd.Timestamp(fin)
+    mydb = mysql.connector.connect(
+    host="localhost",
+    user="root",
+    password=".Afasa3113asafA.",
+    database="pandasi",
+    )
+    mycursor = mydb.cursor(dictionary = True)
+    mycursor.execute("SELECT * FROM pandasi.vinculacion;")
+    vinculacion = mycursor.fetchall()
+    data_vinculacion = pd.DataFrame(vinculacion)
+    data_intervalo = data_vinculacion[pd.to_datetime(data_vinculacion["fecha_evento"]) >= pd.to_datetime(inicio)]
+    data_intervalo = data_intervalo[pd.to_datetime(data_vinculacion["fecha_evento"]) <= pd.to_datetime(fin)]
+    data_intervalo["objetivo_interaccion_agrupado"] = data_intervalo["objetivo_interaccion"].apply(lambda x: categorias_interaccion_dict[x])
+    lista_tipo_interacciones = ["atención", "otros", "publicación"]
+    objetivo_interacciones_trimestrales = data_intervalo[["fecha_evento", "objetivo_interaccion_agrupado"]].groupby(["fecha_evento", "objetivo_interaccion_agrupado"]).size()
+    objetivo_interacciones_trimestrales = objetivo_interacciones_trimestrales.unstack()
+    objetivo_interacciones_trimestrales = objetivo_interacciones_trimestrales.fillna(0)
+    objetivo_interacciones_trimestrales.columns.name = None
+    datum = objetivo_interacciones_trimestrales.reset_index()
+    datum["fecha_evento"] = datum["fecha_evento"].astype(str)
+    datum = datum.to_json(orient="records")
+    # Ahora calculamos el promedio, la varianza y la desviación
+    objetivo_interacciones_trimestrales["total"] = objetivo_interacciones_trimestrales.sum(axis = 1)
+    promedio_diario_trimestral = objetivo_interacciones_trimestrales["total"].mean()
+    varianza_diaria_trimestral = objetivo_interacciones_trimestrales["total"].var()
+    desviacion_diaria_trimestral = objetivo_interacciones_trimestrales["total"].std()
+    maximo_diario_trimestral = objetivo_interacciones_trimestrales["total"].max()
+    return {"tipo_interacciones": lista_tipo_interacciones,
+            "promedio": promedio_diario_trimestral, 
+            "desviacion": desviacion_diaria_trimestral,
+            "varianza": varianza_diaria_trimestral,
+            "maximo": maximo_diario_trimestral,
+            "data": datum}
