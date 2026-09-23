@@ -625,3 +625,60 @@ async def motivo_interacciones_trimestrales(inicio, fin):
             "varianza": varianza_diaria_trimestral,
             "maximo": maximo_diario_trimestral,
             "data": datum}
+
+@app.get("/api/recursos_x_interaccion")
+async def recursos_x_interaccion(inicio, fin):
+    mydb = mysql.connector.connect(
+        host="localhost",
+        user="root",
+        password=".Afasa3113asafA.",
+        database="pandasi",
+        )
+    mycursor = mydb.cursor(dictionary = True)
+    # 1. Traemos la información de las instituciones del pndasi
+    mycursor.execute("SELECT * FROM pandasi.instituciones;")
+    instituciones = mycursor.fetchall()
+    instituciones_pndasi = pd.DataFrame(instituciones)
+    # 2. Formateamos el nombre de la institución
+    instituciones_pndasi['nombre_formateado'] = instituciones_pndasi["nombre"].apply(lambda x: x.lower().rstrip('.'))
+    # 3. Generamos un diccionario con claves y nombres de las intituciones del pndasi
+    dict_instituciones_pndasi = instituciones_pndasi[["clave_institucion", "nombre_formateado"]].groupby('clave_institucion').sum().to_dict()["nombre_formateado"]
+    # 4. Llamamos los datos de interacciones
+    mycursor.execute("SELECT * FROM pandasi.vinculacion;")
+    vinculacion = mycursor.fetchall()
+    data_vinculacion = pd.DataFrame(vinculacion)
+    # 5. Filtramos la data interacciones según la fecha
+    data_vinculacion["fecha"] = pd.to_datetime(data_vinculacion["fecha_evento"]).dt.date
+    data_pndasi = data_vinculacion[pd.to_datetime(data_vinculacion["fecha"]) >= pd.to_datetime(inicio)]
+    data_pndasi = data_pndasi[pd.to_datetime(data_pndasi["fecha"]) <= pd.to_datetime(fin)]
+    # 6. Contamos el número de correos por institución y mapeamos su nombre según su clave
+    interacciones_x_institucion = data_pndasi['clave_institucion'].value_counts().reset_index()
+    interacciones_x_institucion = interacciones_x_institucion.rename(columns = {'count': 'num_interacciones'})
+    interacciones_x_institucion['nombre_institucion'] = interacciones_x_institucion['clave_institucion'].apply(lambda x: dict_instituciones_pndasi[x])
+    # 7. Construimos un diccionario de interacciones por institución
+    dict_interacciones_x_institucion = interacciones_x_institucion[["nombre_institucion", "num_interacciones"]].groupby('nombre_institucion').sum().to_dict()["num_interacciones"]
+    # 8. Filtramos los datos del ckan segun el periodo temporal
+    conjuntos = await multiFetch()
+    recursos = iterar_recursos(conjuntos)
+    recursos_df = pd.DataFrame(recursos)
+    recursos_df["fecha"] = pd.to_datetime(recursos_df["creacion_recurso"]).dt.date
+    data_ckan = recursos_df[pd.to_datetime(recursos_df["fecha"]) >= pd.to_datetime(inicio)]
+    data_ckan = data_ckan[pd.to_datetime(data_ckan["fecha"]) <= pd.to_datetime(fin)]
+    # 9. Contamos en número de recursos por institución en el ckan
+    recursos_x_institucion = data_ckan.value_counts('nombre_institucion').reset_index()
+    recursos_x_institucion = recursos_x_institucion.rename(columns = {'count': 'num_recursos'})
+    # 10. Agregamos una columna con el nombre formateado
+    recursos_x_institucion['nombre_formateado'] = recursos_x_institucion["nombre_institucion"].apply(lambda x: x.split(" (")[0].lower())
+    # 11. Mapeamos el número de interacciones por institución
+    recursos_x_institucion['num_interacciones']= recursos_x_institucion['nombre_formateado'].apply(lambda x: dict_interacciones_x_institucion[x] if x in dict_interacciones_x_institucion.keys() else 0)
+    # 12. Generamos una lista de elementos únicos para saber las categorías asociadas a cada institución
+    data_ckan['categoria_con_coma'] = data_ckan['clave_categoria'] + ", "
+    cuantas_categorias = data_ckan[["nombre_institucion", "categoria_con_coma"]].groupby("nombre_institucion").sum()
+    cuantas_categorias['total_categorias'] = cuantas_categorias['categoria_con_coma'].astype(str).apply(lambda x: list(set(x.strip().split(', '))))
+    # 13. Generamos un diccionario con esa información
+    categorias_x_institucion = cuantas_categorias["total_categorias"].to_dict()
+    # 14. Mapeamos las categorías en la data de recursos por institución
+    recursos_x_institucion['categorias'] = recursos_x_institucion["nombre_institucion"].apply(lambda x: categorias_x_institucion[x])
+    recursos_x_institucion = recursos_x_institucion.sort_values(by = 'num_recursos', ascending = False)
+    data = recursos_x_institucion[["nombre_institucion", "categorias", "num_recursos", "num_interacciones"]].to_json(orient="records")
+    return {"result": data }
